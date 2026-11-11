@@ -5,14 +5,14 @@ setlocal
 for %%I in ("%~dp0..") do set "REPO_ROOT=%%~fI"
 
 :: 2. Configure paths to BF2_ModTools and your SWBF2 installation
-set "MODTOOLS_BIN=C:\BF2_ModTools\ToolsFL\bin"
+set "MODTOOLS_BIN=%REPO_ROOT%\build\bin"
 set "GAME_LVL_DIR=C:\Games\Steam\steamapps\common\Star Wars Battlefront II Classic\GameData\data\_lvl_pc"
 
 :: 3. Define repo subdirectories matching your tree
 set "SRC_SCRIPTS=%REPO_ROOT%\src\scripts"
 set "SRC_REQ=%REPO_ROOT%\src\req"
 set "MUNGED_DIR=%REPO_ROOT%\build\munged"
-set "DIST_LVL_DIR=%REPO_ROOT%\dist\AI_Randomizer\data\_lvl_pc"
+set "DIST_LVL_DIR=%REPO_ROOT%\dist\data\_lvl_pc"
 
 if not exist "%MUNGED_DIR%" mkdir "%MUNGED_DIR%"
 if not exist "%DIST_LVL_DIR%" mkdir "%DIST_LVL_DIR%"
