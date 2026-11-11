@@ -222,72 +222,63 @@ if not AI_Rand_OrigSetupTeams then
     end
 end
 
--- 10. In-Game Customization Menu (Pause -> Fake Console / Mod Options)
+-- 10. Hook ScriptCB_GetConsoleCmds so Fake Console always shows live [AI Mod] settings
 function AI_Rand_RegisterMenu()
-    if not ff_addCommand and not gConsoleCmdList then return end
-    if AI_Rand_MenuRegistered then return end
+    if AI_Rand_MenuRegistered or not ScriptCB_GetConsoleCmds then return end
     AI_Rand_MenuRegistered = true
 
-    local function addOption(labelStr, callbackFn)
-        if type(ff_addCommand) == "function" then
-            ff_addCommand(labelStr, labelStr, callbackFn)
-        elseif type(gConsoleCmdList) == "table" then
-            local n = table.getn(gConsoleCmdList) + 1
-            gConsoleCmdList[n] = { str = labelStr, fn = callbackFn }
+    AI_Rand_OrigGetConsoleCmds = ScriptCB_GetConsoleCmds
+
+    ScriptCB_GetConsoleCmds = function()
+        local cmds = AI_Rand_OrigGetConsoleCmds()
+        if type(cmds) ~= "table" then cmds = {} end
+
+        local function insertRow(labelStr, runStr)
+            local n = table.getn(cmds) + 1
+            cmds[n] = { str = labelStr, cmd = runStr }
         end
+
+        local modState = "OFF"
+        if AI_Rand_Config.enabled then modState = "ON" end
+
+        insertRow("[AI Mod] Status: " .. modState .. " (Click to Toggle)", "AI_Rand_Menu_Toggle()")
+        insertRow("[AI Mod] Enemy Boosted Classes: " .. tostring(AI_Rand_Config.enemyBoostCount) .. " / 6", "AI_Rand_Menu_CycleEnemyCount()")
+        insertRow("[AI Mod] Enemy Boost Level: +" .. tostring(AI_Rand_Config.enemyBoostLevel), "AI_Rand_Menu_CycleEnemyLvl()")
+        insertRow("[AI Mod] Ally Boosted Classes: " .. tostring(AI_Rand_Config.allyBoostCount) .. " / 6", "AI_Rand_Menu_CycleAllyCount()")
+        insertRow("[AI Mod] Ally Boost Level: +" .. tostring(AI_Rand_Config.allyBoostLevel), "AI_Rand_Menu_CycleAllyLvl()")
+        insertRow("[AI Mod] Re-Roll Random Classes Now", "AI_Rand_RollClasses()")
+
+        return cmds
     end
+end
 
-    -- 1. Master Toggle
-    addOption("[AI Mod] Toggle Mod ON / OFF", function()
-        AI_Rand_Config.enabled = not AI_Rand_Config.enabled
-        AI_Rand_UpdateBaseline()
-        AI_Rand_ApplyAllBoosts()
-        print("[AI Mod] Enabled: " .. tostring(AI_Rand_Config.enabled))
-    end)
+-- Global callbacks triggered when clicking the rows in Fake Console
+function AI_Rand_Menu_Toggle()
+    AI_Rand_Config.enabled = not AI_Rand_Config.enabled
+    AI_Rand_UpdateBaseline()
+    AI_Rand_ApplyAllBoosts()
+end
 
-    -- 2. Enemy Boosted Classes Count (Cycles 0 -> 6)
-    addOption("[AI Mod] Enemy Boosted Classes Count (0 - 6)", function()
-        AI_Rand_Config.enemyBoostCount = AI_Rand_Config.enemyBoostCount + 1
-        if AI_Rand_Config.enemyBoostCount > 6 then
-            AI_Rand_Config.enemyBoostCount = 0
-        end
-        AI_Rand_ApplyAllBoosts()
-        print("[AI Mod] Enemy Boosted Classes: " .. tostring(AI_Rand_Config.enemyBoostCount))
-    end)
+function AI_Rand_Menu_CycleEnemyCount()
+    AI_Rand_Config.enemyBoostCount = AI_Rand_Config.enemyBoostCount + 1
+    if AI_Rand_Config.enemyBoostCount > 6 then AI_Rand_Config.enemyBoostCount = 0 end
+    AI_Rand_ApplyAllBoosts()
+end
 
-    -- 3. Enemy Boost Level (Cycles +1 -> +10)
-    addOption("[AI Mod] Enemy AI Boost Level (+1 to +10)", function()
-        AI_Rand_Config.enemyBoostLevel = AI_Rand_Config.enemyBoostLevel + 1
-        if AI_Rand_Config.enemyBoostLevel > 10 then
-            AI_Rand_Config.enemyBoostLevel = 1
-        end
-        AI_Rand_ApplyAllBoosts()
-        print("[AI Mod] Enemy Boost Level: +" .. tostring(AI_Rand_Config.enemyBoostLevel))
-    end)
+function AI_Rand_Menu_CycleEnemyLvl()
+    AI_Rand_Config.enemyBoostLevel = AI_Rand_Config.enemyBoostLevel + 1
+    if AI_Rand_Config.enemyBoostLevel > 10 then AI_Rand_Config.enemyBoostLevel = 1 end
+    AI_Rand_ApplyAllBoosts()
+end
 
-    -- 4. Ally Boosted Classes Count (Cycles 0 -> 6)
-    addOption("[AI Mod] Ally Boosted Classes Count (0 - 6)", function()
-        AI_Rand_Config.allyBoostCount = AI_Rand_Config.allyBoostCount + 1
-        if AI_Rand_Config.allyBoostCount > 6 then
-            AI_Rand_Config.allyBoostCount = 0
-        end
-        AI_Rand_ApplyAllBoosts()
-        print("[AI Mod] Ally Boosted Classes: " .. tostring(AI_Rand_Config.allyBoostCount))
-    end)
+function AI_Rand_Menu_CycleAllyCount()
+    AI_Rand_Config.allyBoostCount = AI_Rand_Config.allyBoostCount + 1
+    if AI_Rand_Config.allyBoostCount > 6 then AI_Rand_Config.allyBoostCount = 0 end
+    AI_Rand_ApplyAllBoosts()
+end
 
-    -- 5. Ally Boost Level (Cycles +1 -> +10)
-    addOption("[AI Mod] Ally AI Boost Level (+1 to +10)", function()
-        AI_Rand_Config.allyBoostLevel = AI_Rand_Config.allyBoostLevel + 1
-        if AI_Rand_Config.allyBoostLevel > 10 then
-            AI_Rand_Config.allyBoostLevel = 1
-        end
-        AI_Rand_ApplyAllBoosts()
-        print("[AI Mod] Ally Boost Level: +" .. tostring(AI_Rand_Config.allyBoostLevel))
-    end)
-
-    -- 6. Re-Roll Random Classes Mid-Match
-    addOption("[AI Mod] Re-Roll Boosted Classes Now", function()
-        AI_Rand_RollClasses()
-        print("[AI Mod] Re-rolled Ally & Enemy boosted classes!")
-    end)
+function AI_Rand_Menu_CycleAllyLvl()
+    AI_Rand_Config.allyBoostLevel = AI_Rand_Config.allyBoostLevel + 1
+    if AI_Rand_Config.allyBoostLevel > 10 then AI_Rand_Config.allyBoostLevel = 1 end
+    AI_Rand_ApplyAllBoosts()
 end
