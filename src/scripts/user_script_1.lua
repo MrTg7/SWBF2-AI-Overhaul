@@ -249,12 +249,13 @@ function AI_Rand_BuildConsoleRows()
     if AI_Rand_Config.enabled then modState = "ON" end
 
     return {
-        { label = "[AI Mod] Status: " .. modState .. " (Click to Toggle)", action = "toggle" },
-        { label = "[AI Mod] Enemy BClasses: " .. tostring(AI_Rand_Config.enemyBoostCount) .. " / 6", action = "enemy_count" },
-        { label = "[AI Mod] Enemy Boost Level: +" .. tostring(AI_Rand_Config.enemyBoostLevel), action = "enemy_lvl" },
-        { label = "[AI Mod] Ally BClasses: " .. tostring(AI_Rand_Config.allyBoostCount) .. " / 6", action = "ally_count" },
-        { label = "[AI Mod] Ally Boost Level: +" .. tostring(AI_Rand_Config.allyBoostLevel), action = "ally_lvl" },
-        { label = "[AI Mod] Re-Roll Random Classes Now", action = "reroll" }
+        { label = "[AI Mod]"},
+        { label = "Status: " .. modState .. " (Click to Toggle)", action = "toggle" },
+        { label = "Enemy BClasses: " .. tostring(AI_Rand_Config.enemyBoostCount) .. " / 6", action = "enemy_count" },
+        { label = "Enemy Boost Level: +" .. tostring(AI_Rand_Config.enemyBoostLevel), action = "enemy_lvl" },
+        { label = "Ally BClasses: " .. tostring(AI_Rand_Config.allyBoostCount) .. " / 6", action = "ally_count" },
+        { label = "Ally Boost Level: +" .. tostring(AI_Rand_Config.allyBoostLevel), action = "ally_lvl" },
+        { label = "Re-Roll Random Classes Now", action = "reroll" }
     }
 end
 
