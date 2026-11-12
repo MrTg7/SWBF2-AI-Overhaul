@@ -4,7 +4,7 @@
 -- Ally vs. Enemy class counts (0-6) and Boost Levels (+1 to +10).
 -- ============================================================================
 
--- 1. Mod Configuration (Defaults match your example out of the box)
+-- 1. Mod Configuration
 AI_Rand_Config = {
     enabled          = true,
     lowerEnemyBase   = true,  -- Lowers Enemy AI (-2 on Normal, -6 on Elite) to match Player base
@@ -19,12 +19,11 @@ AI_Rand_Config = {
 
     -- Runtime Tracking
     playerTeamId     = 1,     -- Auto-detected when human player spawns (1 or 2)
-    activeTeams      = nil,
+    factionTeams     = {},    -- Maps faction key ("rep", "cis", etc.) -> team ID (1 or 2)
     currentRolls     = {}
 }
 
 -- 2. Boost Level Lookup Table (+0 Base through +10 Max)
--- Lower bubble = tighter AI aim cone; Higher visibility = faster AI target lock
 AI_Rand_BoostTable = {
     [0]  = { bubble = "1.35", vis = "0.85", label = "+0 (Base Normal)" },
     [1]  = { bubble = "1.05", vis = "0.92", label = "+1 (Light)" },
@@ -39,7 +38,7 @@ AI_Rand_BoostTable = {
     [10] = { bubble = "0.02", vis = "1.60", label = "+10 (Aimbot)" }
 }
 
--- 3. Faction Weapon Map
+-- 3. Faction Weapon & Unit ODF Maps
 AI_Rand_WeaponMap = {
     rep = {
         soldier  = { "rep_weap_inf_rifle", "rep_weap_inf_pistol" },
@@ -75,6 +74,41 @@ AI_Rand_WeaponMap = {
     }
 }
 
+AI_Rand_UnitMap = {
+    rep = {
+        soldier  = { "rep_inf_ep3_trooper", "rep_inf_ep2_trooper" },
+        assault  = { "rep_inf_ep3_heavy", "rep_inf_ep2_heavy" },
+        sniper   = { "rep_inf_ep3_sniper", "rep_inf_ep2_sniper" },
+        engineer = { "rep_inf_ep3_engineer", "rep_inf_ep2_pilot" },
+        officer  = { "rep_inf_ep3_officer" },
+        special  = { "rep_inf_ep3_jettrooper", "rep_inf_ep2_jettrooper" }
+    },
+    cis = {
+        soldier  = { "cis_inf_rifleman", "cis_inf_sbd" },
+        assault  = { "cis_inf_rocketeer" },
+        sniper   = { "cis_inf_sniper" },
+        engineer = { "cis_inf_engineer", "cis_inf_pilot" },
+        officer  = { "cis_inf_officer" },
+        special  = { "cis_inf_droideka" }
+    },
+    all = {
+        soldier  = { "all_inf_rifleman", "all_inf_rifleman_fleet", "all_inf_rifleman_jungle", "all_inf_rifleman_snow", "all_inf_rifleman_urban", "all_inf_rifleman_desert" },
+        assault  = { "all_inf_rocketeer", "all_inf_rocketeer_fleet", "all_inf_rocketeer_jungle", "all_inf_rocketeer_snow", "all_inf_rocketeer_urban", "all_inf_rocketeer_desert" },
+        sniper   = { "all_inf_sniper", "all_inf_sniper_fleet", "all_inf_sniper_jungle", "all_inf_sniper_snow", "all_inf_sniper_urban", "all_inf_sniper_desert" },
+        engineer = { "all_inf_engineer", "all_inf_engineer_fleet", "all_inf_engineer_jungle", "all_inf_engineer_snow", "all_inf_engineer_urban", "all_inf_engineer_desert" },
+        officer  = { "all_inf_officer", "all_inf_officer_snow" },
+        special  = { "all_inf_wookiee", "all_inf_wookiee_snow" }
+    },
+    imp = {
+        soldier  = { "imp_inf_rifleman", "imp_inf_rifleman_snow", "imp_inf_rifleman_desert" },
+        assault  = { "imp_inf_rocketeer", "imp_inf_rocketeer_snow", "imp_inf_rocketeer_desert" },
+        sniper   = { "imp_inf_sniper", "imp_inf_sniper_snow", "imp_inf_sniper_desert" },
+        engineer = { "imp_inf_engineer", "imp_inf_engineer_snow", "imp_inf_engineer_desert", "imp_inf_pilot" },
+        officer  = { "imp_inf_officer", "imp_inf_officer_snow" },
+        special  = { "imp_inf_dark_trooper" }
+    }
+}
+
 -- 4. Helper: Lua 5.0 Fisher-Yates Shuffle
 function AI_Rand_Shuffle(t)
     local n = table.getn(t)
@@ -86,13 +120,21 @@ function AI_Rand_Shuffle(t)
     return t
 end
 
--- 5. Equalize Baseline by Lowering Enemy AI to Player AI's Base Level
+-- 5. Detect Active Faction Team Numbers (1 vs 2) from Mission Globals
+function AI_Rand_DetectFactions()
+    AI_Rand_Config.factionTeams = {
+        rep = REP or 1,
+        cis = CIS or 2,
+        all = ALL or 1,
+        imp = IMP or 2
+    }
+end
+
+-- 6. Equalize Baseline by Lowering Enemy AI to Player AI's Base Level
 function AI_Rand_UpdateBaseline()
     if AI_Rand_Config.enabled and AI_Rand_Config.lowerEnemyBase then
         DisableAIAutoBalance()
-        -- Normal ("medium"): Player is 10, Enemy is 12 -> Lower Enemy by -2 so both = 10
         SetAIDifficulty(0, -2, "medium")
-        -- Elite ("hard"): Player is 11, Enemy is 17 -> Lower Enemy by -6 so both = 11
         SetAIDifficulty(0, -6, "hard")
     else
         EnableAIAutoBalance()
@@ -101,83 +143,79 @@ function AI_Rand_UpdateBaseline()
     end
 end
 
--- 6. Apply Asymmetric Ally vs. Enemy Boosts to Active Teams
+-- 7. Apply Asymmetric Ally vs. Enemy Boosts to Faction Weapons & Units
 function AI_Rand_ApplyAllBoosts()
-    if not AI_Rand_Config.activeTeams then return end
-
     local baseTier = AI_Rand_BoostTable[0]
 
     for factionKey, roleList in pairs(AI_Rand_Config.currentRolls) do
-        local teamData = AI_Rand_Config.activeTeams[factionKey]
-        if type(teamData) == "table" then
-            -- Determine if this faction is the Human Player's team or the Enemy team
-            local isAllyTeam = (teamData.team == AI_Rand_Config.playerTeamId)
+        local teamId = AI_Rand_Config.factionTeams[factionKey] or 2
+        local isAllyTeam = (teamId == AI_Rand_Config.playerTeamId)
 
-            local numToBoost = AI_Rand_Config.enemyBoostCount
-            local boostLvl   = AI_Rand_Config.enemyBoostLevel
-            local sideTag    = "ENEMY"
+        local numToBoost = AI_Rand_Config.enemyBoostCount
+        local boostLvl   = AI_Rand_Config.enemyBoostLevel
+        local sideTag    = "ENEMY"
 
-            if isAllyTeam then
-                numToBoost = AI_Rand_Config.allyBoostCount
-                boostLvl   = AI_Rand_Config.allyBoostLevel
-                sideTag    = "ALLY"
+        if isAllyTeam then
+            numToBoost = AI_Rand_Config.allyBoostCount
+            boostLvl   = AI_Rand_Config.allyBoostLevel
+            sideTag    = "ALLY"
+        end
+
+        local activeTier = AI_Rand_BoostTable[boostLvl] or baseTier
+
+        for i = 1, table.getn(roleList) do
+            local roleKey = roleList[i]
+            local shouldBoost = (AI_Rand_Config.enabled and (i <= numToBoost))
+
+            local tierToUse = baseTier
+            if shouldBoost then
+                tierToUse = activeTier
             end
 
-            local activeTier = AI_Rand_BoostTable[boostLvl] or baseTier
-
-            for i = 1, table.getn(roleList) do
-                local roleKey = roleList[i]
-                local shouldBoost = (AI_Rand_Config.enabled and (i <= numToBoost))
-
-                local tierToUse = baseTier
-                if shouldBoost then
-                    tierToUse = activeTier
+            -- Update weapon accuracy bubble
+            local factionWeaps = AI_Rand_WeaponMap[factionKey]
+            if factionWeaps and factionWeaps[roleKey] then
+                local weapList = factionWeaps[roleKey]
+                for w = 1, table.getn(weapList) do
+                    SetClassProperty(weapList[w], "AIBubbleSizeMultiplier", tierToUse.bubble)
                 end
-
-                -- Apply aim cone multiplier to all weapons for this unit class
-                local factionWeaps = AI_Rand_WeaponMap[factionKey]
-                if factionWeaps and factionWeaps[roleKey] then
-                    local weapList = factionWeaps[roleKey]
-                    for w = 1, table.getn(weapList) do
-                        SetClassProperty(weapList[w], "AIBubbleSizeMultiplier", tierToUse.bubble)
-                    end
-                end
-
-                -- Apply visibility / target acquisition speed to the unit ODF
-                if type(teamData[roleKey]) == "table" and teamData[roleKey][1] then
-                    local unitOdf = teamData[roleKey][1]
-                    SetClassProperty(unitOdf, "AIVisibilityFactor", tierToUse.vis)
-                end
-
-                print("[AI Mod] " .. sideTag .. " (" .. string.upper(factionKey) .. ") "
-                    .. roleKey .. " -> " .. tierToUse.label)
             end
+
+            -- Update unit visibility / target lock speed
+            local factionUnits = AI_Rand_UnitMap[factionKey]
+            if factionUnits and factionUnits[roleKey] then
+                local unitList = factionUnits[roleKey]
+                for u = 1, table.getn(unitList) do
+                    SetClassProperty(unitList[u], "AIVisibilityFactor", tierToUse.vis)
+                end
+            end
+
+            print("[AI Mod] " .. sideTag .. " (" .. string.upper(factionKey) .. ") "
+                .. roleKey .. " -> " .. tierToUse.label)
         end
     end
 end
 
--- 7. Shuffle & Roll Classes for Each Team
+-- 8. Shuffle & Roll Classes for Each Faction
 function AI_Rand_RollClasses()
-    if not AI_Rand_Config.activeTeams then return end
-
     local roles = { "soldier", "assault", "sniper", "engineer", "officer", "special" }
+    local factions = { "rep", "cis", "all", "imp" }
     AI_Rand_Config.currentRolls = {}
 
-    for factionKey, teamData in pairs(AI_Rand_Config.activeTeams) do
-        if type(teamData) == "table" and AI_Rand_WeaponMap[factionKey] then
-            local shuffled = {}
-            for i = 1, table.getn(roles) do
-                shuffled[i] = roles[i]
-            end
-            AI_Rand_Shuffle(shuffled)
-            AI_Rand_Config.currentRolls[factionKey] = shuffled
+    for f = 1, table.getn(factions) do
+        local factionKey = factions[f]
+        local shuffled = {}
+        for i = 1, table.getn(roles) do
+            shuffled[i] = roles[i]
         end
+        AI_Rand_Shuffle(shuffled)
+        AI_Rand_Config.currentRolls[factionKey] = shuffled
     end
 
     AI_Rand_ApplyAllBoosts()
 end
 
--- 8. Auto-Detect Which Team the Human Player Joined (Even if They Switch Teams!)
+-- 9. Auto-Detect Which Team the Human Player Joined
 function AI_Rand_SetupSpawnListener()
     if AI_Rand_SpawnHooked or not OnCharacterSpawn then return end
     AI_Rand_SpawnHooked = true
@@ -187,98 +225,138 @@ function AI_Rand_SetupSpawnListener()
             local detectedTeam = GetCharacterTeam(character)
             if detectedTeam and detectedTeam ~= AI_Rand_Config.playerTeamId then
                 AI_Rand_Config.playerTeamId = detectedTeam
-                print("[AI Mod] Human player detected on Team " .. tostring(detectedTeam) .. " - Updating Ally/Enemy boosts!")
+                print("[AI Mod] Human player on Team " .. tostring(detectedTeam) .. " - Updating boosts!")
                 AI_Rand_ApplyAllBoosts()
             end
         end
     end)
 end
 
--- 9. Hook SetupTeams() Globally
-if not AI_Rand_OrigSetupTeams then
-    AI_Rand_OrigSetupTeams = SetupTeams
+-- 10. Inject Live [AI Mod] Controls Directly into ifs_fakeconsole
+function AI_Rand_BuildConsoleRows()
+    local modState = "OFF"
+    if AI_Rand_Config.enabled then modState = "ON" end
 
-    SetupTeams = function(teams)
-        AI_Rand_OrigSetupTeams(teams)
+    return {
+        { label = "[AI Mod] Status: " .. modState .. " (Click to Toggle)", action = "toggle" },
+        { label = "[AI Mod] Enemy Boosted Classes: " .. tostring(AI_Rand_Config.enemyBoostCount) .. " / 6", action = "enemy_count" },
+        { label = "[AI Mod] Enemy Boost Level: +" .. tostring(AI_Rand_Config.enemyBoostLevel), action = "enemy_lvl" },
+        { label = "[AI Mod] Ally Boosted Classes: " .. tostring(AI_Rand_Config.allyBoostCount) .. " / 6", action = "ally_count" },
+        { label = "[AI Mod] Ally Boost Level: +" .. tostring(AI_Rand_Config.allyBoostLevel), action = "ally_lvl" },
+        { label = "[AI Mod] Re-Roll Random Classes Now", action = "reroll" }
+    }
+end
 
-        AI_Rand_Config.activeTeams = teams
-        AI_Rand_SpawnHooked = false
+function AI_Rand_RefreshConsoleList(this)
+    if type(gConsoleCmdList) ~= "table" then
+        gConsoleCmdList = {}
+    end
 
-        -- Check current profile difficulty (2 = Normal, 3 = Elite) for debug log
-        if ScriptCB_GetDifficulty then
-            local diff = ScriptCB_GetDifficulty()
-            print("[AI Mod] Profile Difficulty Detected: " .. tostring(diff) .. " (2=Normal, 3=Elite)")
+    -- Remove previous [AI Mod] rows so they don't duplicate
+    local i = table.getn(gConsoleCmdList)
+    while i >= 1 do
+        if gConsoleCmdList[i] and gConsoleCmdList[i].isAIMod then
+            table.remove(gConsoleCmdList, i)
         end
+        i = i - 1
+    end
 
-        AI_Rand_UpdateBaseline()
+    -- Insert updated [AI Mod] rows at the very top of Fake Console
+    local rows = AI_Rand_BuildConsoleRows()
+    for r = table.getn(rows), 1, -1 do
+        local uStr = rows[r].label
+        if ScriptCB_tounicode then
+            uStr = ScriptCB_tounicode(rows[r].label)
+        end
+        table.insert(gConsoleCmdList, 1, {
+            ShowStr    = uStr,
+            CommandStr = "",
+            isAIMod    = true,
+            aiAction   = rows[r].action
+        })
+    end
 
-        -- Advance RNG
-        local steps = math.random(1, 15)
-        for s = 1, steps do math.random() end
-
-        AI_Rand_RollClasses()
-        AI_Rand_SetupSpawnListener()
-        AI_Rand_RegisterMenu()
+    if this and this.listbox and fakeconsole_listbox_layout and ListManager_fnFillContents then
+        ListManager_fnFillContents(this.listbox, gConsoleCmdList, fakeconsole_listbox_layout)
     end
 end
 
--- 10. Hook ScriptCB_GetConsoleCmds so Fake Console always shows live [AI Mod] settings
-function AI_Rand_RegisterMenu()
-    if AI_Rand_MenuRegistered or not ScriptCB_GetConsoleCmds then return end
-    AI_Rand_MenuRegistered = true
+function AI_Rand_HookFakeConsole()
+    if AI_Rand_ConsoleHooked or not ifs_fakeconsole then return end
+    AI_Rand_ConsoleHooked = true
 
-    AI_Rand_OrigGetConsoleCmds = ScriptCB_GetConsoleCmds
+    AI_Rand_OrigFC_Enter  = ifs_fakeconsole.Enter
+    AI_Rand_OrigFC_Accept = ifs_fakeconsole.Input_Accept
 
-    ScriptCB_GetConsoleCmds = function()
-        local cmds = AI_Rand_OrigGetConsoleCmds()
-        if type(cmds) ~= "table" then cmds = {} end
+    ifs_fakeconsole.Enter = function(this, bFwd)
+        if AI_Rand_OrigFC_Enter then
+            AI_Rand_OrigFC_Enter(this, bFwd)
+        end
+        AI_Rand_RefreshConsoleList(this)
+    end
 
-        local function insertRow(labelStr, runStr)
-            local n = table.getn(cmds) + 1
-            cmds[n] = { str = labelStr, cmd = runStr }
+    ifs_fakeconsole.Input_Accept = function(this)
+        if this.CurButton == "_back" or this.CurButton == "back" then
+            if AI_Rand_OrigFC_Accept then AI_Rand_OrigFC_Accept(this) end
+            return
         end
 
-        local modState = "OFF"
-        if AI_Rand_Config.enabled then modState = "ON" end
+        local selIdx = fakeconsole_listbox_layout and fakeconsole_listbox_layout.SelectedIdx
+        local item = (type(gConsoleCmdList) == "table" and selIdx) and gConsoleCmdList[selIdx] or nil
 
-        insertRow("[AI Mod] Status: " .. modState .. " (Click to Toggle)", "AI_Rand_Menu_Toggle()")
-        insertRow("[AI Mod] Enemy Boosted Classes: " .. tostring(AI_Rand_Config.enemyBoostCount) .. " / 6", "AI_Rand_Menu_CycleEnemyCount()")
-        insertRow("[AI Mod] Enemy Boost Level: +" .. tostring(AI_Rand_Config.enemyBoostLevel), "AI_Rand_Menu_CycleEnemyLvl()")
-        insertRow("[AI Mod] Ally Boosted Classes: " .. tostring(AI_Rand_Config.allyBoostCount) .. " / 6", "AI_Rand_Menu_CycleAllyCount()")
-        insertRow("[AI Mod] Ally Boost Level: +" .. tostring(AI_Rand_Config.allyBoostLevel), "AI_Rand_Menu_CycleAllyLvl()")
-        insertRow("[AI Mod] Re-Roll Random Classes Now", "AI_Rand_RollClasses()")
+        if item and item.isAIMod then
+            local act = item.aiAction
+            if act == "toggle" then
+                AI_Rand_Config.enabled = not AI_Rand_Config.enabled
+                AI_Rand_UpdateBaseline()
+                AI_Rand_ApplyAllBoosts()
+            elseif act == "enemy_count" then
+                AI_Rand_Config.enemyBoostCount = AI_Rand_Config.enemyBoostCount + 1
+                if AI_Rand_Config.enemyBoostCount > 6 then AI_Rand_Config.enemyBoostCount = 0 end
+                AI_Rand_ApplyAllBoosts()
+            elseif act == "enemy_lvl" then
+                AI_Rand_Config.enemyBoostLevel = AI_Rand_Config.enemyBoostLevel + 1
+                if AI_Rand_Config.enemyBoostLevel > 10 then AI_Rand_Config.enemyBoostLevel = 1 end
+                AI_Rand_ApplyAllBoosts()
+            elseif act == "ally_count" then
+                AI_Rand_Config.allyBoostCount = AI_Rand_Config.allyBoostCount + 1
+                if AI_Rand_Config.allyBoostCount > 6 then AI_Rand_Config.allyBoostCount = 0 end
+                AI_Rand_ApplyAllBoosts()
+            elseif act == "ally_lvl" then
+                AI_Rand_Config.allyBoostLevel = AI_Rand_Config.allyBoostLevel + 1
+                if AI_Rand_Config.allyBoostLevel > 10 then AI_Rand_Config.allyBoostLevel = 1 end
+                AI_Rand_ApplyAllBoosts()
+            elseif act == "reroll" then
+                AI_Rand_RollClasses()
+            end
 
-        return cmds
+            if ScriptCB_SndPlaySound then
+                ScriptCB_SndPlaySound("shell_menu_enter")
+            end
+
+            -- Refresh labels live on screen without closing Fake Console
+            AI_Rand_RefreshConsoleList(this)
+            return
+        end
+
+        if AI_Rand_OrigFC_Accept then
+            AI_Rand_OrigFC_Accept(this)
+        end
     end
 end
 
--- Global callbacks triggered when clicking the rows in Fake Console
-function AI_Rand_Menu_Toggle()
-    AI_Rand_Config.enabled = not AI_Rand_Config.enabled
+-- 11. Run Immediately When Loaded by v1.3 Patch game_interface
+function AI_Rand_Init()
+    AI_Rand_DetectFactions()
     AI_Rand_UpdateBaseline()
-    AI_Rand_ApplyAllBoosts()
+
+    local steps = math.random(1, 15)
+    for s = 1, steps do math.random() end
+
+    AI_Rand_RollClasses()
+    AI_Rand_SetupSpawnListener()
+    AI_Rand_HookFakeConsole()
+    print("[AI Mod] Initialized successfully via user_script_1!")
 end
 
-function AI_Rand_Menu_CycleEnemyCount()
-    AI_Rand_Config.enemyBoostCount = AI_Rand_Config.enemyBoostCount + 1
-    if AI_Rand_Config.enemyBoostCount > 6 then AI_Rand_Config.enemyBoostCount = 0 end
-    AI_Rand_ApplyAllBoosts()
-end
-
-function AI_Rand_Menu_CycleEnemyLvl()
-    AI_Rand_Config.enemyBoostLevel = AI_Rand_Config.enemyBoostLevel + 1
-    if AI_Rand_Config.enemyBoostLevel > 10 then AI_Rand_Config.enemyBoostLevel = 1 end
-    AI_Rand_ApplyAllBoosts()
-end
-
-function AI_Rand_Menu_CycleAllyCount()
-    AI_Rand_Config.allyBoostCount = AI_Rand_Config.allyBoostCount + 1
-    if AI_Rand_Config.allyBoostCount > 6 then AI_Rand_Config.allyBoostCount = 0 end
-    AI_Rand_ApplyAllBoosts()
-end
-
-function AI_Rand_Menu_CycleAllyLvl()
-    AI_Rand_Config.allyBoostLevel = AI_Rand_Config.allyBoostLevel + 1
-    if AI_Rand_Config.allyBoostLevel > 10 then AI_Rand_Config.allyBoostLevel = 1 end
-    AI_Rand_ApplyAllBoosts()
-end
+AI_Rand_Init()
