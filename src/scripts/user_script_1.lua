@@ -7,6 +7,8 @@
 -- 1. Mod Configuration
 AI_Rand_Config = {
     enabled          = true,
+    useUnicode       = false, -- Fake Console labels: false = plain strings (try this first),
+                              -- true = wrap labels in ScriptCB_tounicode (flip if labels show blank)
     lowerEnemyBase   = true,  -- Lowers Enemy AI (-2 on Normal, -6 on Elite) to match Player base
 
     -- Independent Class Counts (0 to 6 classes per team)
@@ -289,7 +291,7 @@ function AI_Rand_RefreshConsoleList(this)
     local rows = AI_Rand_BuildConsoleRows()
     for r = table.getn(rows), 1, -1 do
         local uStr = rows[r].label
-        if ScriptCB_tounicode then
+        if AI_Rand_Config.useUnicode and ScriptCB_tounicode then
             uStr = ScriptCB_tounicode(rows[r].label)
         end
         table.insert(gConsoleCmdList, 1, {
