@@ -109,6 +109,15 @@ AI_Rand_UnitMap = {
     }
 }
 
+-- 3b. Safe-call helper: one failing game function must never stop the rest of the script
+function AI_Rand_Safe(label, fn, a, b)
+    local ok, err = pcall(fn, a, b)
+    if not ok then
+        print("[AI Mod] ERROR in " .. label .. ": " .. tostring(err))
+    end
+    return ok
+end
+
 -- 4. Helper: Lua 5.0 Fisher-Yates Shuffle
 function AI_Rand_Shuffle(t)
     local n = table.getn(t)
@@ -177,7 +186,7 @@ function AI_Rand_ApplyAllBoosts()
             if factionWeaps and factionWeaps[roleKey] then
                 local weapList = factionWeaps[roleKey]
                 for w = 1, table.getn(weapList) do
-                    SetClassProperty(weapList[w], "AIBubbleSizeMultiplier", tierToUse.bubble)
+                    pcall(SetClassProperty, weapList[w], "AIBubbleSizeMultiplier", tierToUse.bubble)
                 end
             end
 
@@ -186,7 +195,7 @@ function AI_Rand_ApplyAllBoosts()
             if factionUnits and factionUnits[roleKey] then
                 local unitList = factionUnits[roleKey]
                 for u = 1, table.getn(unitList) do
-                    SetClassProperty(unitList[u], "AIVisibilityFactor", tierToUse.vis)
+                    pcall(SetClassProperty, unitList[u], "AIVisibilityFactor", tierToUse.vis)
                 end
             end
 
@@ -247,9 +256,24 @@ function AI_Rand_BuildConsoleRows()
     }
 end
 
+-- Diagnostic: shows (in BFront2.log) which Fake Console globals actually exist.
+-- If any of these print "nil", this script's assumptions about ifs_fakeconsole are wrong.
+function AI_Rand_LogConsoleState(tag)
+    print("[AI Mod] " .. tag
+        .. " | ifs_fakeconsole=" .. type(ifs_fakeconsole)
+        .. " | gConsoleCmdList=" .. type(gConsoleCmdList)
+        .. " | fakeconsole_listbox_layout=" .. type(fakeconsole_listbox_layout)
+        .. " | ListManager_fnFillContents=" .. type(ListManager_fnFillContents))
+end
+
 function AI_Rand_RefreshConsoleList(this)
+    AI_Rand_LogConsoleState("RefreshConsoleList")
+
+    -- Do NOT create the table ourselves: if the stock console keeps its commands
+    -- somewhere else, making a fresh global here would hide the real problem.
     if type(gConsoleCmdList) ~= "table" then
-        gConsoleCmdList = {}
+        print("[AI Mod] gConsoleCmdList is not a table - cannot inject rows")
+        return
     end
 
     -- Remove previous [AI Mod] rows so they don't duplicate
@@ -292,7 +316,7 @@ function AI_Rand_HookFakeConsole()
         if AI_Rand_OrigFC_Enter then
             AI_Rand_OrigFC_Enter(this, bFwd)
         end
-        AI_Rand_RefreshConsoleList(this)
+        AI_Rand_Safe("console refresh (Enter)", AI_Rand_RefreshConsoleList, this)
     end
 
     ifs_fakeconsole.Input_Accept = function(this)
@@ -308,7 +332,7 @@ function AI_Rand_HookFakeConsole()
             local act = item.aiAction
             if act == "toggle" then
                 AI_Rand_Config.enabled = not AI_Rand_Config.enabled
-                AI_Rand_UpdateBaseline()
+                AI_Rand_Safe("baseline", AI_Rand_UpdateBaseline)
                 AI_Rand_ApplyAllBoosts()
             elseif act == "enemy_count" then
                 AI_Rand_Config.enemyBoostCount = AI_Rand_Config.enemyBoostCount + 1
@@ -343,20 +367,46 @@ function AI_Rand_HookFakeConsole()
             AI_Rand_OrigFC_Accept(this)
         end
     end
+
+    print("[AI Mod] Fake Console hooked")
+end
+
+-- 10b. Fallback: if ifs_fakeconsole didn't exist yet when this script loaded,
+-- hook it the moment the game opens that screen.
+function AI_Rand_SetupLateHook()
+    if AI_Rand_PushHooked or not ScriptCB_PushScreen then return end
+    AI_Rand_PushHooked = true
+    AI_Rand_OrigPushScreen = ScriptCB_PushScreen
+
+    ScriptCB_PushScreen = function(...)
+        if arg[1] == "ifs_fakeconsole" and not AI_Rand_ConsoleHooked then
+            AI_Rand_Safe("late console hook", AI_Rand_HookFakeConsole)
+        end
+        return AI_Rand_OrigPushScreen(unpack(arg))
+    end
 end
 
 -- 11. Run Immediately When Loaded by v1.3 Patch game_interface
+-- Every stage is isolated with pcall, and the Fake Console hook goes FIRST, so an
+-- error in any game-side call (SetAIDifficulty, SetClassProperty, ...) can no
+-- longer stop the menu entries from being installed.
 function AI_Rand_Init()
-    AI_Rand_DetectFactions()
-    AI_Rand_UpdateBaseline()
+    print("[AI Mod] user_script_1 loading...")
+    AI_Rand_LogConsoleState("Init")
+
+    AI_Rand_Safe("console hook", AI_Rand_HookFakeConsole)
+    AI_Rand_Safe("late console hook setup", AI_Rand_SetupLateHook)
+
+    AI_Rand_Safe("detect factions", AI_Rand_DetectFactions)
+    AI_Rand_Safe("baseline", AI_Rand_UpdateBaseline)
 
     local steps = math.random(1, 15)
     for s = 1, steps do math.random() end
 
-    AI_Rand_RollClasses()
-    AI_Rand_SetupSpawnListener()
-    AI_Rand_HookFakeConsole()
-    print("[AI Mod] Initialized successfully via user_script_1!")
+    AI_Rand_Safe("roll classes", AI_Rand_RollClasses)
+    AI_Rand_Safe("spawn listener", AI_Rand_SetupSpawnListener)
+
+    print("[AI Mod] Init finished (console hooked: " .. tostring(AI_Rand_ConsoleHooked) .. ")")
 end
 
 AI_Rand_Init()
